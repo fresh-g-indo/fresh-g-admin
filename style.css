@@ -198,7 +198,9 @@ button:disabled { cursor: default; opacity: .32; }
 .shake { animation: shake .42s cubic-bezier(.36, .07, .19, .97); }
 
 /* ---------- App frame ---------- */
-.app { width: 100%; max-width: 520px; margin-inline: auto; animation: appear .4s ease both; }
+/* In Arabic the page can scroll past its left edge, so a view sliding that way would
+   widen the whole page. Clipping stops that, and unlike hidden it keeps sticky working. */
+.app { width: 100%; max-width: 520px; margin-inline: auto; overflow-x: clip; animation: appear .4s ease both; }
 
 .topbar {
   display: flex;
@@ -732,9 +734,44 @@ button:disabled { cursor: default; opacity: .32; }
 .chip-wrap .chip { min-height: 42px; }
 .chip.on { animation: pop .3s var(--ease); }
 
+.label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 30px;
+  margin-bottom: 7px;
+}
+
+.label-row .label { margin-bottom: 0; }
+
+.label-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 36px;
+  margin-block: -3px;
+  padding: 0 10px;
+  border-radius: 10px;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--green-700);
+}
+
+.label-btn:active:not(:disabled), .label-btn[aria-pressed='true'] { background: var(--green-100); }
+.label-btn[aria-pressed='true'] { color: var(--green-900); font-weight: 600; }
+.label-btn .icon { width: 15px; height: 15px; }
+
+.chip-edit .icon { width: 14px; height: 14px; color: var(--green-700); }
+.chip.editing { background: var(--mango-soft); border-color: var(--mango); }
+
 .inline-add { display: flex; gap: 8px; margin-top: 8px; animation: rise .28s var(--ease) both; }
 .inline-add .input { flex: 1; min-width: 0; }
 .inline-add .btn { width: auto; height: 52px; padding-inline: 18px; flex: none; }
+.inline-add .btn-danger { width: 52px; padding: 0; }
+
+.panel-note { margin-top: 7px; font-size: 12.5px; color: var(--ink-2); animation: rise .28s var(--ease) both; }
 
 .money {
   position: relative;

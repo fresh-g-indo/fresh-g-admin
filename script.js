@@ -697,23 +697,27 @@ function render({ slide, keepScroll = true } = {}) {
   }
 }
 
-// Rows glide to their new place instead of jumping when the list changes.
-function renderWithFlip(flashId) {
-  const before = $$('[data-flip]');
+// Elements glide to their new place instead of jumping when their list changes.
+function glide(elementsOf, update) {
+  const before = elementsOf();
   const animate = before.length > 0 && before.length < 200 && !reducedMotion();
-  const first = new Map(animate ? before.map((el) => [el.dataset.flip, el.getBoundingClientRect().top]) : []);
-  render();
-  if (animate) {
-    for (const el of $$('[data-flip]')) {
-      const top = first.get(el.dataset.flip);
-      if (top === undefined) {
-        el.animate([{ opacity: 0, transform: 'scale(.97)' }, { opacity: 1, transform: 'none' }], { duration: 300, easing: EASE });
-      } else if (top !== el.getBoundingClientRect().top) {
-        el.animate([{ transform: `translateY(${top - el.getBoundingClientRect().top}px)` }, { transform: 'none' }], { duration: 320, easing: EASE });
-      }
+  const first = new Map(animate ? before.map((el) => [el.dataset.flip, el.getBoundingClientRect()]) : []);
+  update();
+  if (!animate) return;
+  for (const el of elementsOf()) {
+    const from = first.get(el.dataset.flip);
+    const to = el.getBoundingClientRect();
+    if (!from) {
+      el.animate([{ opacity: 0, transform: 'scale(.97)' }, { opacity: 1, transform: 'none' }], { duration: 300, easing: EASE });
+    } else if (from.left !== to.left || from.top !== to.top) {
+      el.animate([{ transform: `translate(${from.left - to.left}px, ${from.top - to.top}px)` }, { transform: 'none' }], { duration: 320, easing: EASE });
     }
   }
-  if (flashId) $(`[data-flip="${flashId}"]`)?.classList.add('flash');
+}
+
+function renderWithFlip(flashId) {
+  glide(() => $$('#view [data-flip]'), () => render());
+  if (flashId) $(`#view [data-flip="${flashId}"]`)?.classList.add('flash');
 }
 
 function setTab(tab) {
@@ -876,6 +880,14 @@ if (window.visualViewport) {
 }
 
 /* -------------------------------- Form pieces ------------------------------- */
+
+// The sheet is a form, so Enter here must run this action instead of saving the sheet.
+const onEnter = (input, action) => input.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    action();
+  }
+});
 
 const moneyInput = (id, big = false) => `
   <div class="money ${big ? 'money-big' : ''}">
@@ -1160,14 +1172,20 @@ function openExpenseSheet(expense = null) {
     amount: expense?.amount ?? 0,
     date: expense?.spent_on ?? today(),
   };
+  // In edit mode a chip opens its rename and delete panel instead of being selected.
+  let editing = false;
+  let editingId = null;
 
   const root = openSheet({
     title: expense ? 'تعديل المصروف' : 'مصروف جديد',
     body: `
       <div class="field">
-        <span class="label">الصنف</span>
+        <div class="label-row">
+          <span class="label" id="f-items-label"></span>
+          <button type="button" class="label-btn" id="f-items-edit"></button>
+        </div>
         <div class="chip-wrap" id="f-items"></div>
-        <div id="f-new-item"></div>
+        <div id="f-item-panel"></div>
       </div>
       <div class="field">
         <label class="label" for="f-amount">المبلغ</label>
@@ -1182,18 +1200,26 @@ function openExpenseSheet(expense = null) {
   const amountInput = $('#f-amount', root);
   const noteInput = $('#f-note', root);
   const chips = $('#f-items', root);
-  const newItem = $('#f-new-item', root);
+  const panel = $('#f-item-panel', root);
+  const editToggle = $('#f-items-edit', root);
   amountInput.value = form.amount ? fmt(form.amount) : '';
   noteInput.value = expense?.note ?? '';
 
-  function paintChips() {
+  function drawChips() {
     const list = expenseItems();
     const current = form.itemId && findRow('expense_items', form.itemId);
-    if (current?.archived) list.push(current);
-    chips.innerHTML = `
-      ${list.map((item) => `<button type="button" class="chip ${item.id === form.itemId ? 'on' : ''}" data-id="${item.id}">${esc(item.name)}</button>`).join('')}
-      <button type="button" class="chip chip-add" data-new>${icon('plus')}صنف جديد</button>`;
+    if (current?.archived && !editing) list.push(current);
+    chips.innerHTML = editing
+      ? list.map((item) => `<button type="button" class="chip chip-edit ${item.id === editingId ? 'editing' : ''}" data-id="${item.id}" data-flip="${item.id}">${icon('pencil')}${esc(item.name)}</button>`).join('')
+      : `${list.map((item) => `<button type="button" class="chip ${item.id === form.itemId ? 'on' : ''}" data-id="${item.id}" data-flip="${item.id}">${esc(item.name)}</button>`).join('')}
+        <button type="button" class="chip chip-add" data-new data-flip="new">${icon('plus')}صنف جديد</button>`;
+    $('#f-items-label', root).textContent = editing ? 'اضغط على صنف لتعديله أو حذفه' : 'الصنف';
+    editToggle.innerHTML = editing ? 'تم' : `${icon('pencil')}تعديل`;
+    editToggle.setAttribute('aria-pressed', String(editing));
+    editToggle.hidden = !expenseItems().length;
   }
+
+  const paintChips = () => glide(() => $$('.chip', chips), drawChips);
 
   function selectItem(id) {
     form.itemId = id;
@@ -1201,23 +1227,84 @@ function openExpenseSheet(expense = null) {
     if (!form.amount) amountInput.focus();
   }
 
+  function closeItemPanel() {
+    panel.textContent = '';
+    editingId = null;
+    $$('.chip', chips).forEach((chip) => chip.classList.remove('editing'));
+  }
+
+  function openItemEditor(id) {
+    const item = findRow('expense_items', id);
+    editingId = id;
+    $$('.chip', chips).forEach((chip) => chip.classList.toggle('editing', chip.dataset.id === id));
+    panel.innerHTML = `
+      <div class="inline-add">
+        <input class="input" type="text" aria-label="اسم الصنف" autocomplete="off" enterkeyhint="done">
+        <button type="button" class="btn btn-primary" data-rename>حفظ</button>
+        <button type="button" class="btn btn-danger" data-remove aria-label="حذف الصنف">${icon('trash')}</button>
+      </div>
+      <p class="panel-note">حذف الصنف لا يؤثر على المصاريف المسجلة سابقًا.</p>`;
+    const input = $('input', panel);
+    input.value = item.name;
+    const rename = () => {
+      const saved = saveNamedRow('expense_items', { id, name: input.value });
+      if (!saved) {
+        shake(input);
+        input.focus();
+        return;
+      }
+      closeItemPanel();
+      paintChips();
+      render();
+      toast('تم حفظ الصنف');
+    };
+    onEnter(input, rename);
+    $('[data-rename]', panel).addEventListener('click', rename);
+    $('[data-remove]', panel).addEventListener('click', () => {
+      const wasSelected = form.itemId === id;
+      if (wasSelected) form.itemId = null;
+      closeItemPanel();
+      archiveRow('expense_items', item, 'تم حذف الصنف', {
+        keepSheet: true,
+        onUndo() {
+          if (wasSelected && !form.itemId) form.itemId = id;
+          paintChips();
+        },
+      });
+      if (!expenseItems().length) editing = false;
+      paintChips();
+    });
+    panel.scrollIntoView({ block: 'nearest', behavior: reducedMotion() ? 'auto' : 'smooth' });
+  }
+
+  editToggle.addEventListener('click', () => {
+    editing = !editing;
+    closeItemPanel();
+    paintChips();
+  });
+
   chips.addEventListener('click', (event) => {
     const chip = event.target.closest('.chip');
     if (!chip) return;
+    if (editing) {
+      if (chip.dataset.id === editingId) closeItemPanel();
+      else openItemEditor(chip.dataset.id);
+      return;
+    }
     if (chip.dataset.id) {
       selectItem(chip.dataset.id);
       return;
     }
-    if (newItem.firstChild) {
-      newItem.textContent = '';
+    if (panel.firstChild) {
+      closeItemPanel();
       return;
     }
-    newItem.innerHTML = `
+    panel.innerHTML = `
       <div class="inline-add">
         <input class="input" type="text" placeholder="اسم الصنف" aria-label="اسم الصنف" autocomplete="off" enterkeyhint="done">
         <button type="button" class="btn btn-primary">إضافة</button>
       </div>`;
-    const input = $('input', newItem);
+    const input = $('input', panel);
     const add = () => {
       const item = saveNamedRow('expense_items', { name: input.value });
       if (!item) {
@@ -1225,16 +1312,11 @@ function openExpenseSheet(expense = null) {
         input.focus();
         return;
       }
-      newItem.textContent = '';
+      closeItemPanel();
       selectItem(item.id);
     };
-    input.addEventListener('keydown', (keyEvent) => {
-      if (keyEvent.key === 'Enter') {
-        keyEvent.preventDefault();
-        add();
-      }
-    });
-    $('button', newItem).addEventListener('click', add);
+    onEnter(input, add);
+    $('button', panel).addEventListener('click', add);
     input.focus();
   });
 
@@ -1267,6 +1349,8 @@ function openExpenseSheet(expense = null) {
     navigator.vibrate?.(12);
     if (again) {
       Object.assign(form, { itemId: null, amount: 0 });
+      editing = false;
+      closeItemPanel();
       amountInput.value = '';
       noteInput.value = '';
       paintChips();
@@ -1321,15 +1405,16 @@ function saveNamedRow(table, { id, name, price }) {
   return row;
 }
 
-function archiveRow(table, row, message) {
+function archiveRow(table, row, message, { keepSheet = false, onUndo } = {}) {
   upsert(table, [{ ...row, archived: true }]);
-  closeSheet();
+  if (!keepSheet) closeSheet();
   renderWithFlip();
   toast(message, {
     action: 'تراجع',
     onAction() {
       upsert(table, [row]);
       renderWithFlip(row.id);
+      onUndo?.();
     },
   });
 }
